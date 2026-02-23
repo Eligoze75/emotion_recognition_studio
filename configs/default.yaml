@@ -1,0 +1,50 @@
+# Default configuration for emotion recognition training pipeline.
+# All paths are relative to the project root unless otherwise noted.
+
+# Dataset
+dataset:
+  raw_archive_root: "data/raw/archive"
+  images_subdir: "images"
+  processed_root: "data/processed"
+  train_subdir: "train"
+  val_subdir: "val"
+  val_ratio: 0.2  # Fraction of data used for validation
+  exclude_neutral: true
+
+# DataLoader
+dataloader:
+  batch_size: 16
+  num_workers: 0  # Set > 0 for multi-process loading
+  pin_memory: false
+
+# Augmentations (training only when enabled)
+augmentation:
+  enabled: true
+  random_grayscale_prob: 0.2
+  salt_pepper_prob: 0.05
+  salt_pepper_amount: 0.02
+  rotation_degrees: 15
+  random_crop_scale: [0.85, 1.0]
+  horizontal_flip_prob: 0.5
+  brightness_jitter: 0.3
+  contrast_jitter: 0.3
+
+# Model
+model:
+  yolo_model: "yolov8n.pt"  # Ultralytics model id
+  classifier_hidden_dims: [512, 256]
+  dropout: 0.0 # Dropout disabled for small datasets
+  num_classes: 7
+
+# Training
+training:
+  epochs: 50
+  learning_rate: 0.001
+  weight_decay: 0.0005
+
+# Reproducibility and paths
+seed: 42
+output_dir: "outputs"
+save_classifier_name: "emotion_classifier.pt"
+save_label_mapping_name: "label_mapping.json"
+save_config_snapshot_name: "config_snapshot.yaml"

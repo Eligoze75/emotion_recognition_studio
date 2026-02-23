@@ -1,0 +1,26 @@
+# Conda environment for emotion_recognition_studio (Python 3.12).
+# Do not pin CUDA versions; install PyTorch with CUDA separately if needed.
+# Create: conda env create -f environment.yml
+# Activate: conda activate emotion_recognition_studio
+
+name: emotion_recognition_studio
+
+channels:
+  - pytorch
+  - conda-forge
+  - defaults
+
+dependencies:
+  - python=3.12
+  - numpy
+  - pandas
+  - pyyaml
+  - pip
+
+  - pip:
+    - torch
+    - torchvision
+    - ultralytics
+    - opencv-python
+    - albumentations
+    - Pillow

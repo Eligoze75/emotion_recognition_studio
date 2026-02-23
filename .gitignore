@@ -420,3 +420,13 @@ FodyWeavers.xsd
 
 # training images dataset
 data/raw/archive/images/*
+
+# Emotion Recognition Studio — training outputs and env
+outputs/
+.pytest_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+.env
+venv/
+.env.local

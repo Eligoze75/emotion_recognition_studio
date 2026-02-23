@@ -2,8 +2,10 @@
 
 import json
 import sys
+import time
 from pathlib import Path
 from typing import Any, Optional
+import argparse
 
 # Ensure project root is on path when running as script.
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -87,6 +89,28 @@ def _infer_backbone_feature_channels(backbone: Any, device: torch.device) -> int
     return int(out.shape[1])
 
 
+def _macro_precision_recall(
+    labels: list[int], preds: list[int], num_classes: int
+) -> tuple[float, float]:
+    """Compute macro-averaged precision and recall (0..1)."""
+    labels_t = torch.tensor(labels, dtype=torch.long)
+    preds_t = torch.tensor(preds, dtype=torch.long)
+    precisions: list[float] = []
+    recalls: list[float] = []
+    for c in range(num_classes):
+        tp = ((preds_t == c) & (labels_t == c)).sum().item()
+        pred_c = (preds_t == c).sum().item()
+        label_c = (labels_t == c).sum().item()
+        prec = tp / pred_c if pred_c else 0.0
+        rec = tp / label_c if label_c else 0.0
+        precisions.append(prec)
+        recalls.append(rec)
+    return (
+        sum(precisions) / num_classes if num_classes else 0.0,
+        sum(recalls) / num_classes if num_classes else 0.0,
+    )
+
+
 def main(config_path: Optional[Path] = None) -> None:
     """Run the full training pipeline.
 
@@ -108,7 +132,7 @@ def main(config_path: Optional[Path] = None) -> None:
     from src.models.yolo_backbone import YOLOBackbone
     from src.models.emotion_classifier import EmotionClassifier
 
-    backbone = YOLOBackbone(model_id=yolo_id, device=device)
+    backbone = YOLOBackbone(model_path=yolo_id, device=device)
     backbone.eval()
     feature_channels = _infer_backbone_feature_channels(backbone, device)
     classifier = EmotionClassifier(
@@ -148,9 +172,16 @@ def main(config_path: Optional[Path] = None) -> None:
     with open(output_dir / save_config_snap, "w") as f:
         yaml.safe_dump(config, f, default_flow_style=False, sort_keys=False)
 
+    epoch_times: list[float] = []
+    best_val_acc = 0.0
+    best_epoch = 0
+    total_train_start = time.perf_counter()
+
     for epoch in range(epochs):
+        epoch_start = time.perf_counter()
         classifier.train()
         train_loss = 0.0
+        train_correct = 0
         n_train = 0
         for images, labels in train_loader:
             images = images.to(device, non_blocking=True)
@@ -163,11 +194,16 @@ def main(config_path: Optional[Path] = None) -> None:
             loss.backward()
             optimizer.step()
             train_loss += loss.item() * images.size(0)
+            preds = logits.argmax(dim=1)
+            train_correct += (preds == labels).sum().item()
             n_train += images.size(0)
 
         train_loss /= max(n_train, 1)
+        train_acc = train_correct / max(n_train, 1)
+
         classifier.eval()
         val_loss = 0.0
+        val_correct = 0
         n_val = 0
         with torch.no_grad():
             for images, labels in val_loader:
@@ -177,20 +213,67 @@ def main(config_path: Optional[Path] = None) -> None:
                 logits = classifier(features)
                 loss = criterion(logits, labels)
                 val_loss += loss.item() * images.size(0)
+                preds = logits.argmax(dim=1)
+                val_correct += (preds == labels).sum().item()
                 n_val += images.size(0)
         val_loss /= max(n_val, 1)
+        val_acc = val_correct / max(n_val, 1)
+
+        if val_acc > best_val_acc:
+            best_val_acc = val_acc
+            best_epoch = epoch + 1
+
+        epoch_elapsed = time.perf_counter() - epoch_start
+        epoch_times.append(epoch_elapsed)
         print(
-            f"Epoch {epoch + 1}/{epochs}  train_loss={train_loss:.4f}  val_loss={val_loss:.4f}"
+            f"Epoch {epoch + 1}/{epochs}  train_loss={train_loss:.4f}  train_acc={train_acc:.4f}  "
+            f"val_loss={val_loss:.4f}  val_acc={val_acc:.4f}  time={epoch_elapsed:.1f}s"
         )
+
+    total_train_time = time.perf_counter() - total_train_start
+
+    # Final validation pass for precision/recall (saved model)
+    classifier.eval()
+    all_val_labels: list[int] = []
+    all_val_preds: list[int] = []
+    with torch.no_grad():
+        for images, labels in val_loader:
+            images = images.to(device, non_blocking=True)
+            features = backbone(images)
+            logits = classifier(features)
+            preds = logits.argmax(dim=1)
+            all_val_labels.extend(labels.cpu().tolist())
+            all_val_preds.extend(preds.cpu().tolist())
+    macro_precision, macro_recall = _macro_precision_recall(
+        all_val_labels, all_val_preds, num_classes
+    )
+    avg_epoch_time = sum(epoch_times) / len(epoch_times) if epoch_times else 0.0
 
     torch.save(classifier.state_dict(), output_dir / save_classifier)
     print(f"Saved classifier to {output_dir / save_classifier}")
     print(f"Saved label mapping to {output_dir / save_mapping}")
     print(f"Saved config snapshot to {output_dir / save_config_snap}")
 
+    print("\n" + "=" * 60)
+    print("TRAINING REPORT")
+    print("=" * 60)
+    print(f"  Best validation accuracy:  {best_val_acc:.4f}  (epoch {best_epoch})")
+    print(f"  Total training time:      {total_train_time:.1f}s")
+    print(f"  Average epoch time:       {avg_epoch_time:.1f}s")
+    print(f"  Macro precision (val):    {macro_precision:.4f}")
+    print(f"  Macro recall (val):       {macro_recall:.4f}")
+    print("=" * 60)
+
 
 if __name__ == "__main__":
-    path = None
-    if len(sys.argv) > 1:
-        path = Path(sys.argv[1])
-    main(path)
+
+    parser = argparse.ArgumentParser(description="Train emotion classifier")
+    parser.add_argument(
+        "--config",
+        type=Path,
+        default=None,
+        help="Path to YAML config file (defaults to configs/default.yaml)",
+    )
+
+    args = parser.parse_args()
+    main(args.config)

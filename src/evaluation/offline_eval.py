@@ -5,11 +5,15 @@ Run from project root:
 """
 
 import argparse
+import os
 import sys
 from pathlib import Path
 from typing import List, Optional, Tuple
 
-import cv2
+# Reduce chance of segfault on macOS (OpenMP/NumPy/PyTorch/OpenCV conflicts).
+os.environ.setdefault("OMP_NUM_THREADS", "1")
+os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
+
 import numpy as np
 import torch
 
@@ -86,6 +90,10 @@ def run_offline_eval(
 
     predictor = EmotionPredictor(checkpoint_path, device=None)
     device = predictor._device
+
+    # Import OpenCV after PyTorch/model load to reduce segfault risk on macOS.
+    import cv2
+
     all_probs: List[np.ndarray] = []
     all_pred_indices: List[int] = []
 

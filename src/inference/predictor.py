@@ -57,7 +57,7 @@ class EmotionPredictor:
         from src.models.yolo_backbone import YOLOBackbone
         from src.models.emotion_classifier import EmotionClassifier
 
-        self._backbone = YOLOBackbone(model_id=yolo_id, device=self._device)
+        self._backbone = YOLOBackbone(model_path=yolo_id, device=self._device)
         self._backbone.eval()
 
         # Infer feature channels with a dummy forward.
